@@ -23,27 +23,52 @@ def crear_trozos(texto, tamanio=2000):
     return trozos
 
 def buscar_relevantes(trozos, pregunta):
-    relevantes = []
-    palabras = pregunta.lower().split()
+    # Palabras vacías que no sirven para buscar
+    stopwords = {"de", "la", "el", "en", "a", "y", "que", "es", "se", "un", "una", "los", "las", "con", "por", "para", "mi", "me", "te", "si", "no", "al"}
+    
+    palabras = [p for p in pregunta.lower().split() if p not in stopwords]
+    
+    if not palabras:
+        return trozos[:3]
+    
+    # Puntuar cada trozo según cuántas palabras clave tiene
+    puntajes = []
     for trozo in trozos:
-        if any(palabra in trozo.lower() for palabra in palabras):
-            relevantes.append(trozo)
+        puntaje = sum(1 for palabra in palabras if palabra in trozo.lower())
+        puntajes.append((puntaje, trozo))
+    
+    puntajes.sort(reverse=True)
+    relevantes = [trozo for puntaje, trozo in puntajes if puntaje > 0]
     return relevantes[:3] if relevantes else trozos[:3]
 
-def preguntar(trozos, pregunta, idioma):
+def preguntar(trozos, pregunta, idioma, historial):
     contexto = "\n\n".join(buscar_relevantes(trozos, pregunta))
+    
+    mensajes = [
+        {"role": "system", "content": f"Respondé preguntas basándote SOLO en el contexto dado. SIEMPRE respondé en {idioma}, sin excepción, sin importar el idioma de la pregunta. Si la respuesta no está en el contexto, decilo.\n\nContexto del documento:\n{contexto}"}
+    ]
+    
+    # Agregar historial de conversación
+    for msg in historial:
+        mensajes.append(msg)
+    
+    mensajes.append({"role": "user", "content": pregunta})
     
     respuesta = client.chat.completions.create(
         model="openai/gpt-oss-20b",
-        messages=[
-            {"role": "system", "content": f"Respondé preguntas basándote SOLO en el contexto dado. SIEMPRE respondé en {idioma}, sin excepción, sin importar el idioma de la pregunta"},
-            {"role": "user", "content": f"Contexto:\n{contexto}\n\nPregunta: {pregunta}"}
-        ]
+        messages=mensajes
     )
     return respuesta.choices[0].message.content
 
 def resumir(trozos, idioma):
-    contexto = "\n\n".join(trozos[:5])
+    total = len(trozos)
+    indices = set()
+    indices.update(range(min(2, total)))
+    indices.update(range(max(0, total//2-1), min(total, total//2+1)))
+    indices.update(range(max(0, total-2), total))
+    seleccionados = [trozos[i] for i in sorted(indices)]
+    contexto = "\n\n".join(seleccionados)
+    
     respuesta = client.chat.completions.create(
         model="openai/gpt-oss-20b",
         messages=[
@@ -98,7 +123,7 @@ if archivo:
         st.session_state.historial.append({"role": "user", "content": pregunta})
         
         with st.spinner("Pensando..."):
-            respuesta = preguntar(st.session_state.trozos, pregunta, idioma)
+            respuesta = preguntar(st.session_state.trozos, pregunta, idioma, st.session_state.historial)
         
         st.session_state.historial.append({"role": "assistant", "content": respuesta})
         st.rerun()
